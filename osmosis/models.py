@@ -6,10 +6,12 @@ from django.apps import apps
 from django.db import models
 from django.db import connections
 from django.db import transaction
-from django.db.models.loading import get_model
 
 from django.core.exceptions import ValidationError
-from django.utils.importlib import import_module
+try:
+    from importlib import import_module
+except ImportError:
+    from django.utils.importlib import import_module
 
 from google.appengine.ext import deferred
 from google.appengine.ext import db
@@ -395,12 +397,14 @@ class ImportShard(models.Model):
 
     @property
     def task(self):
-        model = get_model(*self.task_model_path.split("."))
+        app_label, model_name = self.task_model_path.split(".")
+        model = apps.get_model(app_label=app_label, model_name=model_name)
         return model.objects.get(pk=self.task_id)
 
     def process(self):
         meta = self.task.get_meta()
-        task_model = get_model(*self.task.model_path.split("."))
+        app_label, model_name = self.task.model_path.split(".")
+        task_model = apps.get_model(app_label=app_label, model_name=model_name)
 
         this = ImportShard.objects.get(pk=self.pk)  # Reload, self is pickled
         source_data = json.loads(this.source_data_json)
@@ -478,7 +482,9 @@ class ImportShard(models.Model):
         self._write_error_row(data, errors)
 
     def _write_error_row(self, data, errors):
-        if not get_model(*self.task.model_path.split(".")).get_meta().generate_error_csv:
+        app_label, model_name = self.task.model_path.split(".")
+        task_model = apps.get_model(app_label=app_label, model_name=model_name)
+        if not task_model.get_meta().generate_error_csv:
             return
 
         ImportShardError.objects.create(
@@ -500,7 +506,8 @@ class ImportShard(models.Model):
 
     def _finalize_errors(self):
         self = self.__class__.objects.get(pk=self.pk)
-        task_model = get_model(*self.task.model_path.split("."))
+        app_label, model_name = self.task.model_path.split(".")
+        task_model = apps.get_model(app_label=app_label, model_name=model_name)
         task = task_model.objects.get(pk=self.task_id)
 
         if not task_model.get_meta().generate_error_csv:
