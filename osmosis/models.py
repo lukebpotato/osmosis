@@ -57,9 +57,9 @@ class ImportStatus(object):
 class AbstractImportTask(models.Model):
     model_path = models.CharField(max_length=500, editable=False)
 
-    source_data = models.FileField("File", upload_to="/", max_length=1023)
+    source_data = models.FileField("File", max_length=1023)
 
-    error_csv = models.FileField("Error File", upload_to="/", editable=False, null=True, max_length=1023)
+    error_csv = models.FileField("Error File", editable=False, null=True, max_length=1023)
     error_csv_filename = models.CharField(max_length=1023, editable=False)
 
     row_count = models.PositiveIntegerField(default=0, editable=False)
