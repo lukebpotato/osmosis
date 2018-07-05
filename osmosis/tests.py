@@ -24,6 +24,39 @@ value1, value2, value3
 TEST_FILE_ONE.seek(0)
 
 
+def mock_deferredrunner(f, *a, **kw):
+    """ A replacement for deferred.defer running the deferred function inline. """
+    kwargs = {k: v for k, v in kw.items() if not k.startswith('_')}
+    f(*a, **kwargs)
+
+
+class MockFile(StringIO.StringIO):
+    def __init__(self, *a, **kw):
+        StringIO.StringIO.__init__(self, *a, **kw)
+        self.is_deleted = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+class MockCloudstorage(object):
+    MOCK_CONTENTS = 'MOCK_CONTENTS'
+
+    def __init__(self):
+        self.files = {}
+
+    def open(self, fname, mode='r'):
+        if fname not in self.files:
+            self.files[fname] = MockFile('' if mode == 'w' else self.MOCK_CONTENTS)
+        return self.files[fname]
+
+    def delete(self, fname):
+        self.files[fname].is_deleted = True
+
+
 class ImportTaskTests(TestCase):
     def test_start_defers_process(self):
         patches = [
@@ -93,6 +126,35 @@ class ImportTaskTests(TestCase):
                 task.save()
 
                 self.assertTrue(def_patch.called)
+
+    def test_shard_error_csvs_deleted(self):
+        task = ImportTask.objects.create(shard_count=1, shards_processed=1)
+        shard = task.get_shard_model().objects.create(
+            task_id=task.pk,
+            task_model_path=task.model_path,
+            source_data_json='[{"header":"header"}]',
+            error_csv_filename='fake_filename',
+            error_csv_written=True,
+        )
+
+        with mock.patch('django.db.models.Model.save') as save_patch:
+            with mock.patch('google.appengine.ext.deferred.defer', new=mock_deferredrunner):
+                with mock.patch('osmosis.models.cloudstorage', new=MockCloudstorage()) as mock_cloudstorage:
+                    # setup partial error
+                    mock_cloudstorage.files[shard.error_csv_filename] = MockFile('''['value', 'Example error message.']''')
+                    task.save()
+                    self.assertTrue(save_patch.called)
+
+                    task.status = ImportStatus.IN_PROGRESS
+                    task.save()
+                    # A csv collecting all errors is created, individual shard error files are deleted
+                    all_errors = task._error_csv_filename()
+                    self.assertTrue(mock_cloudstorage.files[shard.error_csv_filename].is_deleted)
+                    self.assertFalse(mock_cloudstorage.files[all_errors].is_deleted)
+                    contents = mock_cloudstorage.files[all_errors].getvalue()
+                    # our partial errors should be included in
+                    self.assertTrue('Example error message' in contents)
+
 
     def test_error_callback_on_error(self):
         pass
