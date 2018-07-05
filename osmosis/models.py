@@ -292,6 +292,13 @@ class AbstractImportTask(models.Model):
             self.pk
         )
 
+    def delete_error_files(self):
+        shards = self.get_shard_model().objects.filter(task_id=self.pk, task_model_path=self.model_path)
+        for shard in shards:
+            if not shard.error_csv_filename:
+                continue
+            cloudstorage.delete(shard.error_csv_filename)
+
     def finish(self):
         """
         Called when all shards have finished processing
@@ -332,7 +339,6 @@ class AbstractImportTask(models.Model):
 
                     # Write the shard's error file into the master file
                     f.write(cloudstorage.open(shard.error_csv_filename).read())
-                    cloudstorage.delete(shard.error_csv_filename)
 
             if has_written:
                 # Create a blobstore key for the GCS file
@@ -343,6 +349,7 @@ class AbstractImportTask(models.Model):
 
         self.status = ImportStatus.FINISHED
         self.save()
+        self.defer(self.delete_error_files)
 
     def save(self, *args, **kwargs):
         defer_finish = False
